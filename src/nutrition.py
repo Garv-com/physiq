@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LinearRegression
 
 
@@ -16,3 +17,18 @@ def estimate_maintenance(df, weight_col="trend_weight", calorie_col="calories", 
     maintenance = mean_calories - kcal_per_kg * mean_daily_change
 
     return round(maintenance, 1)
+
+
+def estimate_maintenance_rolling(df, window=30, weight_col="trend_weight", calorie_col="calories", kcal_per_kg=7700):
+    estimates = [np.nan] * len(df)
+
+    for i in range(window, len(df) + 1):
+        window_df = df.iloc[i - window:i]
+        estimates[i - 1] = estimate_maintenance(
+            window_df, weight_col=weight_col, calorie_col=calorie_col, kcal_per_kg=kcal_per_kg
+        )
+
+    result = df.copy()
+    result["maintenance_estimate"] = estimates
+
+    return result
