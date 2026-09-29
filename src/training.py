@@ -1,4 +1,5 @@
 import pandas as pd
+from src.smoothing import compute_ema_trend
 
 
 def get_session_top_weights(df, exercise):
@@ -47,3 +48,17 @@ def get_session_volume(df, weight_col="weight_kg", reps_col="reps"):
     session_volume = session_volume.rename(columns={"set_volume": "total_volume"})
 
     return session_volume.sort_values("date").reset_index(drop=True)
+
+def build_exercise_summary(df, exercise, alpha=0.3):
+    session_tops = get_session_top_weights(df, exercise)
+    session_tops = compute_ema_trend(session_tops, value_col="weight_kg", alpha=alpha, output_col="trend_top_weight")
+
+    volume = get_session_volume(df[df["exercise"] == exercise])
+
+    summary = session_tops.merge(volume[["session_id", "total_volume"]], on="session_id")
+
+    prs = detect_prs(df, exercise)
+    pr_sessions = set(prs["session_id"])
+    summary["is_pr_session"] = summary["session_id"].isin(pr_sessions)
+
+    return summary
