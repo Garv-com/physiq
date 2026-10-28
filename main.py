@@ -5,7 +5,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 
 from src.smoothing import compute_ema_trend
-from src.nutrition import estimate_maintenance
+from src.nutrition import estimate_maintenance, estimate_maintenance_rolling
 from src.training import build_exercise_summary
 
 
@@ -42,3 +42,13 @@ def get_training_summary(exercise: str):
     summary["date"] = summary["date"].astype(str)
 
     return summary.to_dict(orient="records")
+
+@app.get("/nutrition/maintenance/rolling")
+def get_rolling_maintenance(window: int = 30):
+    df = pd.read_csv("data/raw/synthetic_nutrition_log.csv")
+    df_smoothed = compute_ema_trend(df, alpha=0.1)
+    df_rolling = estimate_maintenance_rolling(df_smoothed, window=window)
+    df_rolling["date"] = df_rolling["date"].astype(str)
+
+    result = df_rolling[["date", "maintenance_estimate"]].dropna()
+    return result.to_dict(orient="records")
