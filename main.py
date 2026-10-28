@@ -5,6 +5,7 @@ import datetime
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+from src.forecasting import forecast_weight, trend_status
 
 from src.database import (
     init_db,
@@ -110,6 +111,23 @@ def get_rolling_maintenance(window: int = Query(30, ge=7, le=365)):
         )
 
     return result.to_dict(orient="records")
+
+@app.get("/nutrition/forecast")
+def get_weight_forecast(days: int = Query(14, ge=1, le=60)):
+    df = load_nutrition_df()
+    try:
+        return forecast_weight(df, days_ahead=days)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.get("/nutrition/trend-status")
+def get_trend_status():
+    df = load_nutrition_df()
+    try:
+        return trend_status(df)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.get("/training/summary/{exercise}")
