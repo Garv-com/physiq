@@ -2,7 +2,7 @@ import sys
 sys.path.append(".")
 
 import datetime
-
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,13 @@ MIN_NUTRITION_DAYS = WARMUP_DAYS + 14
 init_db()
 
 app = FastAPI(title="Physiq API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 
 class NutritionEntry(BaseModel):

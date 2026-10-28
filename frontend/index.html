@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physiq</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #181b22;
+    --border: #272b35;
+    --text: #e8eaf0;
+    --muted: #8b93a7;
+    --accent: #4f8cff;
+    --good: #3ecf8e;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header span { color: var(--muted); font-size: 14px; }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+  }
+  .tabs { display: flex; gap: 8px; margin-bottom: 24px; }
+  .tab {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 10px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat { font-size: 32px; font-weight: 600; }
+  .stat small { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .chart-card { margin-bottom: 24px; }
+  .chart-wrap { position: relative; height: 320px; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
+  input, select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 11px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .message { margin-top: 12px; font-size: 13px; min-height: 18px; }
+  .message.ok { color: var(--good); }
+  .message.error { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pr { color: var(--good); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Physiq</h1>
+  <span>Nutrition and training intelligence</span>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab active" data-tab="nutrition">Nutrition</button>
+    <button class="tab" data-tab="training">Training</button>
+  </div>
+
+  <section id="nutrition" class="panel active">
+    <div class="grid">
+      <div class="card">
+        <h3>Estimated maintenance</h3>
+        <div class="stat" id="maintenance-value">–<small> kcal/day</small></div>
+      </div>
+      <div class="card">
+        <h3>Days logged</h3>
+        <div class="stat" id="days-value">–</div>
+      </div>
+      <div class="card">
+        <h3>Logging coverage</h3>
+        <div class="stat" id="coverage-value">–</div>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <h3>Rolling maintenance estimate</h3>
+      <div class="chart-wrap"><canvas id="rolling-chart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>Log a day</h3>
+      <form id="nutrition-form">
+        <label>Date<input type="date" id="n-date" required></label>
+        <label>Calories<input type="number" id="n-calories" step="1" min="1" required></label>
+        <label>Weight (kg)<input type="number" id="n-weight" step="0.1" min="20" required></label>
+        <button class="primary" type="submit">Save</button>
+      </form>
+      <div class="message" id="nutrition-message"></div>
+    </div>
+  </section>
+
+  <section id="training" class="panel">
+    <div class="card chart-card">
+      <h3>Exercise</h3>
+      <select id="exercise-select"></select>
+    </div>
+
+    <div class="card chart-card">
+      <h3>Top set trend</h3>
+      <div class="chart-wrap"><canvas id="training-chart"></canvas></div>
+    </div>
+
+    <div class="card chart-card">
+      <h3>Sessions</h3>
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Top set (kg)</th><th>Trend (kg)</th><th>Volume</th><th></th></tr>
+        </thead>
+        <tbody id="sessions-body"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Log a set</h3>
+      <form id="set-form">
+        <label>Date<input type="date" id="s-date" required></label>
+        <label>Exercise<input type="text" id="s-exercise" list="exercise-list" required></label>
+        <datalist id="exercise-list"></datalist>
+        <label>Weight (kg)<input type="number" id="s-weight" step="0.5" min="0" required></label>
+        <label>Reps<input type="number" id="s-reps" step="1" min="1" required></label>
+        <label>RPE<input type="number" id="s-rpe" step="0.5" min="1" max="10"></label>
+        <button class="primary" type="submit">Save set</button>
+      </form>
+      <div class="message" id="set-message"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const API = "http://127.0.0.1:8000";
+const EXERCISES = ["Squat", "Bench Press", "Deadlift", "Overhead Press"];
+let rollingChart = null;
+let trainingChart = null;
+
+const today = new Date().toISOString().slice(0, 10);
+document.getElementById("n-date").value = today;
+document.getElementById("s-date").value = today;
+
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById(tab.dataset.tab).classList.add("active");
+  });
+});
+
+function showMessage(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = "message " + (ok ? "ok" : "error");
+}
+
+function errorText(data) {
+  if (!data || !data.detail) return "Request failed";
+  if (typeof data.detail === "string") return data.detail;
+  return data.detail.map(d => d.loc.slice(1).join(".") + ": " + d.msg).join("; ");
+}
+
+async function loadNutrition() {
+  const res = await fetch(API + "/nutrition/maintenance");
+  const data = await res.json();
+
+  if (!res.ok) {
+    document.getElementById("maintenance-value").innerHTML = "–<small> kcal/day</small>";
+    document.getElementById("days-value").textContent = "–";
+    document.getElementById("coverage-value").textContent = "–";
+    showMessage("nutrition-message", errorText(data), false);
+  } else {
+    document.getElementById("maintenance-value").innerHTML =
+      Math.round(data.estimated_maintenance_kcal) + "<small> kcal/day</small>";
+    document.getElementById("days-value").innerHTML =
+      data.days_used + "<small> of " + data.days_span + "</small>";
+    document.getElementById("coverage-value").textContent = Math.round(data.coverage * 100) + "%";
+  }
+
+  const rollingRes = await fetch(API + "/nutrition/maintenance/rolling");
+  if (!rollingRes.ok) return;
+  const rolling = await rollingRes.json();
+
+  const labels = rolling.map(r => r.date);
+  const values = rolling.map(r => r.maintenance_estimate);
+
+  if (rollingChart) rollingChart.destroy();
+  rollingChart = new Chart(document.getElementById("rolling-chart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        label: "Estimated maintenance (kcal)",
+        data: values,
+        borderColor: "#4f8cff",
+        backgroundColor: "rgba(79,140,255,0.15)",
+        fill: true,
+        tension: 0.25,
+        pointRadius: 0
+      }]
+    },
+    options: chartOptions()
+  });
+}
+
+function chartOptions() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: "#8b93a7" } } },
+    scales: {
+      x: { ticks: { color: "#8b93a7", maxTicksLimit: 8 }, grid: { color: "#272b35" } },
+      y: { ticks: { color: "#8b93a7" }, grid: { color: "#272b35" } }
+    }
+  };
+}
+
+async function loadTraining() {
+  const exercise = document.getElementById("exercise-select").value;
+  const res = await fetch(API + "/training/summary/" + encodeURIComponent(exercise));
+  const rows = await res.json();
+  if (!res.ok) return;
+
+  if (trainingChart) trainingChart.destroy();
+  trainingChart = new Chart(document.getElementById("training-chart"), {
+    type: "line",
+    data: {
+      labels: rows.map(r => r.date),
+      datasets: [
+        {
+          label: "Top set (kg)",
+          data: rows.map(r => r.weight_kg),
+          borderColor: "rgba(139,147,167,0.7)",
+          pointBackgroundColor: rows.map(r => r.is_pr_session ? "#3ecf8e" : "#8b93a7"),
+          pointRadius: rows.map(r => r.is_pr_session ? 6 : 3),
+          tension: 0
+        },
+        {
+          label: "Trend (kg)",
+          data: rows.map(r => r.trend_top_weight),
+          borderColor: "#4f8cff",
+          pointRadius: 0,
+          borderWidth: 3,
+          tension: 0.25
+        }
+      ]
+    },
+    options: chartOptions()
+  });
+
+  document.getElementById("sessions-body").innerHTML = rows
+    .slice()
+    .reverse()
+    .map(r => `<tr>
+      <td>${r.date}</td>
+      <td>${r.weight_kg}</td>
+      <td>${r.trend_top_weight}</td>
+      <td>${r.total_volume}</td>
+      <td class="pr">${r.is_pr_session ? "PR" : ""}</td>
+    </tr>`)
+    .join("");
+}
+
+function initExercises() {
+  const select = document.getElementById("exercise-select");
+  select.innerHTML = EXERCISES.map(e => `<option>${e}</option>`).join("");
+  select.addEventListener("change", loadTraining);
+  document.getElementById("exercise-list").innerHTML = EXERCISES.map(e => `<option value="${e}">`).join("");
+}
+
+document.getElementById("nutrition-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const body = {
+    date: document.getElementById("n-date").value,
+    calories: parseFloat(document.getElementById("n-calories").value),
+    weight: parseFloat(document.getElementById("n-weight").value)
+  };
+  const res = await fetch(API + "/nutrition/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (res.ok) {
+    showMessage("nutrition-message", "Saved " + data.date, true);
+    loadNutrition();
+  } else {
+    showMessage("nutrition-message", errorText(data), false);
+  }
+});
+
+document.getElementById("set-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const rpeValue = document.getElementById("s-rpe").value;
+  const body = {
+    date: document.getElementById("s-date").value,
+    exercise: document.getElementById("s-exercise").value,
+    weight_kg: parseFloat(document.getElementById("s-weight").value),
+    reps: parseInt(document.getElementById("s-reps").value, 10),
+    rpe: rpeValue === "" ? null : parseFloat(rpeValue)
+  };
+  const res = await fetch(API + "/training/sets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (res.ok) {
+    showMessage("set-message", "Saved set " + data.set_number + " (session " + data.session_id + ")", true);
+    loadTraining();
+  } else {
+    showMessage("set-message", errorText(data), false);
+  }
+});
+
+initExercises();
+loadNutrition();
+loadTraining();
+</script>
+</body>
+</html>
