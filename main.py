@@ -13,11 +13,17 @@ from src.database import (
     add_nutrition_entry,
     add_workout_set,
 )
-from src.smoothing import compute_ema_trend
-from src.nutrition import estimate_maintenance, estimate_maintenance_rolling
+from src.smoothing import compute_time_aware_ema
+from src.nutrition import (
+    MIN_COVERAGE,
+    WARMUP_DAYS,
+    estimate_maintenance,
+    estimate_maintenance_rolling,
+    logging_coverage,
+)
 from src.training import build_exercise_summary
 
-MIN_NUTRITION_DAYS = 14
+MIN_NUTRITION_DAYS = WARMUP_DAYS + 14
 
 init_db()
 
@@ -49,28 +55,53 @@ def get_maintenance_estimate():
     if len(df) < MIN_NUTRITION_DAYS:
         raise HTTPException(
             status_code=400,
-            detail=f"At least {MIN_NUTRITION_DAYS} days of nutrition data are needed; found {len(df)}.",
+            detail=f"At least {MIN_NUTRITION_DAYS} logged days are needed; found {len(df)}.",
         )
 
-    df_smoothed = compute_ema_trend(df, alpha=0.1)
-    maintenance = estimate_maintenance(df_smoothed)
+    logged_days, span_days, coverage = logging_coverage(df)
+    if coverage < MIN_COVERAGE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Only {logged_days} of {span_days} days are logged ({coverage:.0%}). "
+                f"At least {MIN_COVERAGE:.0%} is needed for a reliable estimate."
+            ),
+        )
 
-    return {"estimated_maintenance_kcal": maintenance, "days_used": len(df)}
+    df_smoothed = compute_time_aware_ema(df, alpha=0.1)
+    maintenance = estimate_maintenance(df_smoothed, warmup_days=WARMUP_DAYS)
+
+    return {
+        "estimated_maintenance_kcal": maintenance,
+        "days_used": logged_days,
+        "days_span": span_days,
+        "coverage": round(coverage, 2),
+        "warmup_days_skipped": WARMUP_DAYS,
+    }
 
 
 @app.get("/nutrition/maintenance/rolling")
 def get_rolling_maintenance(window: int = Query(30, ge=7, le=365)):
     df = load_nutrition_df()
-    if len(df) < window:
+    if len(df) < MIN_NUTRITION_DAYS:
         raise HTTPException(
             status_code=400,
-            detail=f"Window of {window} days requested, but only {len(df)} days of data exist.",
+            detail=f"At least {MIN_NUTRITION_DAYS} logged days are needed; found {len(df)}.",
         )
 
-    df_smoothed = compute_ema_trend(df, alpha=0.1)
-    df_rolling = estimate_maintenance_rolling(df_smoothed, window=window)
+    df_smoothed = compute_time_aware_ema(df, alpha=0.1)
+    df_rolling = estimate_maintenance_rolling(df_smoothed, window=window, warmup_days=WARMUP_DAYS)
 
     result = df_rolling[["date", "maintenance_estimate"]].dropna()
+    if result.empty:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No {window}-day window has enough logged days. Each window needs "
+                f"{MIN_COVERAGE:.0%} coverage and starts after the first {WARMUP_DAYS} days."
+            ),
+        )
+
     return result.to_dict(orient="records")
 
 

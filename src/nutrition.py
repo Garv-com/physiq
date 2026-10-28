@@ -3,6 +3,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 
 MIN_COVERAGE = 0.7
+WARMUP_DAYS = 14
 
 
 def logging_coverage(df, date_col="date"):
@@ -12,8 +13,24 @@ def logging_coverage(df, date_col="date"):
     return logged_days, span_days, logged_days / span_days
 
 
-def estimate_maintenance(df, weight_col="trend_weight", calorie_col="calories", date_col="date", kcal_per_kg=7700):
+def estimate_maintenance(
+    df,
+    weight_col="trend_weight",
+    calorie_col="calories",
+    date_col="date",
+    kcal_per_kg=7700,
+    warmup_days=0,
+):
     dates = pd.to_datetime(df[date_col])
+
+    if warmup_days > 0:
+        keep = dates >= dates.min() + pd.Timedelta(days=warmup_days)
+        df = df[keep]
+        dates = dates[keep]
+
+    if len(df) < 2:
+        raise ValueError("Not enough data after the warm-up period.")
+
     days = (dates - dates.min()).dt.days.to_numpy().reshape(-1, 1)
     weights = df[weight_col].to_numpy()
 
@@ -36,17 +53,18 @@ def estimate_maintenance_rolling(
     date_col="date",
     kcal_per_kg=7700,
     min_coverage=MIN_COVERAGE,
+    warmup_days=0,
 ):
     result = df.copy()
     dates = pd.to_datetime(result[date_col])
-    first_date = dates.min()
+    earliest_start = dates.min() + pd.Timedelta(days=warmup_days)
     min_points = max(2, int(np.ceil(min_coverage * window)))
 
     estimates = []
     for current in dates:
         window_start = current - pd.Timedelta(days=window - 1)
 
-        if window_start < first_date:
+        if window_start < earliest_start:
             estimates.append(np.nan)
             continue
 
