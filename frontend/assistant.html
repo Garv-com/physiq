@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physiq Assistant</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #181b22;
+    --border: #272b35;
+    --text: #e8eaf0;
+    --muted: #8b93a7;
+    --accent: #4f8cff;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header span { color: var(--muted); font-size: 14px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; font-size: 14px; }
+  main {
+    flex: 1;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 16px;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    line-height: 1.5;
+    font-size: 15px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .bubble.user { align-self: flex-end; background: var(--accent); color: white; }
+  .bubble.assistant { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
+  .bubble.pending { color: var(--muted); }
+  .bubble.error { align-self: flex-start; background: transparent; border: 1px solid var(--bad); color: var(--bad); }
+  .tools { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .suggestions button {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .composer { display: flex; gap: 8px; }
+  textarea {
+    flex: 1;
+    resize: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-family: inherit;
+  }
+  button#send {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0 20px;
+    border-radius: 10px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  button#send:disabled { opacity: 0.5; cursor: default; }
+  .footnote { margin-top: 10px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Physiq Assistant</h1>
+  <span>Explains your data using the app's own models</span>
+  <a href="index.html">Back to dashboard</a>
+</header>
+
+<main>
+  <div id="messages"></div>
+
+  <div class="suggestions" id="suggestions"></div>
+
+  <div class="composer">
+    <textarea id="input" rows="2" maxlength="2000" placeholder="Ask about your weight, maintenance, forecast or training"></textarea>
+    <button id="send">Send</button>
+  </div>
+  <div class="footnote">Numbers come from the app's models, not from the AI. This is not medical advice.</div>
+</main>
+
+<script>
+const API = "http://127.0.0.1:8000";
+const MAX_HISTORY = 18;
+const SUGGESTIONS = [
+  "How is my weight trending?",
+  "Forecast my weight for the next 2 weeks",
+  "What is my maintenance estimate?",
+  "How is my squat progressing?",
+  "How reliable are these numbers?"
+];
+
+let history = [];
+let busy = false;
+
+const messagesEl = document.getElementById("messages");
+const inputEl = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+
+function errorText(data) {
+  if (!data || !data.detail) return "Request failed";
+  if (typeof data.detail === "string") return data.detail;
+  return data.detail.map(d => d.loc.slice(1).join(".") + ": " + d.msg).join("; ");
+}
+
+function addBubble(kind, text, tools) {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble " + kind;
+  bubble.textContent = text;
+
+  if (tools && tools.length) {
+    const note = document.createElement("div");
+    note.className = "tools";
+    note.textContent = "Used: " + Array.from(new Set(tools)).join(", ");
+    bubble.appendChild(note);
+  }
+
+  messagesEl.appendChild(bubble);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return bubble;
+}
+
+function trimHistory() {
+  while (history.length > MAX_HISTORY) history.shift();
+  while (history.length > 0 && history[0].role !== "user") history.shift();
+}
+
+async function send(text) {
+  text = text.trim();
+  if (!text || busy) return;
+
+  busy = true;
+  sendBtn.disabled = true;
+  addBubble("user", text);
+  history.push({ role: "user", content: text });
+  trimHistory();
+  inputEl.value = "";
+
+  const pending = addBubble("assistant pending", "Thinking...");
+
+  try {
+    const res = await fetch(API + "/assistant/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history })
+    });
+    const data = await res.json();
+    pending.remove();
+
+    if (res.ok) {
+      addBubble("assistant", data.reply, data.tools_used);
+      history.push({ role: "assistant", content: data.reply });
+    } else {
+      addBubble("error", errorText(data));
+      history.pop();
+    }
+  } catch (error) {
+    pending.remove();
+    addBubble("error", "Could not reach the API: " + error.message);
+    history.pop();
+  } finally {
+    busy = false;
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+document.getElementById("suggestions").innerHTML = "";
+SUGGESTIONS.forEach(text => {
+  const button = document.createElement("button");
+  button.textContent = text;
+  button.addEventListener("click", () => send(text));
+  document.getElementById("suggestions").appendChild(button);
+});
+
+sendBtn.addEventListener("click", () => send(inputEl.value));
+inputEl.addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    send(inputEl.value);
+  }
+});
+
+addBubble("assistant", "Hi. Ask me about your weight trend, forecast, maintenance calories or training progress. I look up your numbers from the app's models before answering.");
+</script>
+</body>
+</html>

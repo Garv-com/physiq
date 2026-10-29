@@ -2,11 +2,12 @@ import sys
 sys.path.append(".")
 
 import datetime
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
-from src.forecasting import forecast_path, forecast_weight, trend_status
+from typing import Literal
 
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from src.assistant import AssistantError, chat as assistant_chat
 from src.database import (
     init_db,
     load_nutrition_df,
@@ -15,7 +16,7 @@ from src.database import (
     add_nutrition_entry,
     add_workout_set,
 )
-
+from src.forecasting import forecast_path, forecast_weight, trend_status
 from src.smoothing import compute_time_aware_ema
 from src.nutrition import (
     MIN_COVERAGE,
@@ -52,6 +53,15 @@ class WorkoutSetEntry(BaseModel):
     weight_kg: float = Field(ge=0, le=1000)
     reps: int = Field(ge=1, le=100)
     rpe: float | None = Field(default=None, ge=1, le=10)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=20)
 
 
 @app.get("/")
@@ -114,6 +124,7 @@ def get_rolling_maintenance(window: int = Query(30, ge=7, le=365)):
 
     return result.to_dict(orient="records")
 
+
 @app.get("/nutrition/forecast")
 def get_weight_forecast(days: int = Query(14, ge=1, le=60)):
     df = load_nutrition_df()
@@ -130,6 +141,7 @@ def get_trend_status():
         return trend_status(df)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+
 
 @app.get("/nutrition/forecast/path")
 def get_forecast_path(days: int = Query(14, ge=1, le=60)):
@@ -182,3 +194,17 @@ def log_workout_set(entry: WorkoutSetEntry):
         entry.rpe,
     )
     return {"status": "saved", **result}
+
+
+@app.post("/assistant/chat")
+def assistant_chat_endpoint(request: ChatRequest):
+    if request.messages[0].role != "user" or request.messages[-1].role != "user":
+        raise HTTPException(
+            status_code=422,
+            detail="The conversation must start and end with a user message.",
+        )
+
+    try:
+        return assistant_chat([message.model_dump() for message in request.messages])
+    except AssistantError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail)
