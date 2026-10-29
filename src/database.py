@@ -118,3 +118,12 @@ if __name__ == "__main__":
     )
     print(f"Nutrition rows: {len(load_nutrition_df())}")
     print(f"Workout set rows: {len(load_workout_df())}")
+
+def load_recent_nutrition(days):
+    with get_connection() as conn:
+        return pd.read_sql(
+            "SELECT date, calories, weight FROM nutrition_logs "
+            "WHERE date >= date((SELECT MAX(date) FROM nutrition_logs), ?) ORDER BY date",
+            conn,
+            params=(f"-{days - 1} days",),
+        )

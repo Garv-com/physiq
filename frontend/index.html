@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Physiq</title>
+<link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -89,6 +90,7 @@
   th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
   .pr { color: var(--good); font-weight: 600; }
+  .muted { color: var(--muted); font-size: 13px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -98,6 +100,8 @@
 </header>
 
 <main>
+  <div class="message" id="global-message"></div>
+
   <div class="tabs">
     <button class="tab active" data-tab="nutrition">Nutrition</button>
     <button class="tab" data-tab="training">Training</button>
@@ -117,6 +121,28 @@
         <h3>Logging coverage</h3>
         <div class="stat" id="coverage-value">–</div>
       </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Trend status</h3>
+        <div class="stat" id="status-value">–</div>
+        <div class="muted" id="status-detail"></div>
+      </div>
+      <div class="card">
+        <h3>Weekly rate</h3>
+        <div class="stat" id="rate-value">–<small> kg/week</small></div>
+      </div>
+      <div class="card">
+        <h3>14-day forecast</h3>
+        <div class="stat" id="forecast-value">–<small> kg</small></div>
+        <div class="muted" id="forecast-range"></div>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <h3>Weight and forecast</h3>
+      <div class="chart-wrap"><canvas id="forecast-chart"></canvas></div>
     </div>
 
     <div class="card chart-card">
@@ -178,8 +204,10 @@ const API = "http://127.0.0.1:8000";
 const EXERCISES = ["Squat", "Bench Press", "Deadlift", "Overhead Press"];
 let rollingChart = null;
 let trainingChart = null;
+let forecastChart = null;
 
-const today = new Date().toISOString().slice(0, 10);
+const now = new Date();
+const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 document.getElementById("n-date").value = today;
 document.getElementById("s-date").value = today;
 
@@ -198,13 +226,31 @@ function showMessage(id, text, ok) {
   el.className = "message " + (ok ? "ok" : "error");
 }
 
+function reportError(error) {
+  showMessage("global-message", "Could not load data from " + API + ": " + error.message, false);
+}
+
 function errorText(data) {
   if (!data || !data.detail) return "Request failed";
   if (typeof data.detail === "string") return data.detail;
   return data.detail.map(d => d.loc.slice(1).join(".") + ": " + d.msg).join("; ");
 }
 
+function chartOptions() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: "#8b93a7" } } },
+    scales: {
+      x: { ticks: { color: "#8b93a7", maxTicksLimit: 8 }, grid: { color: "#272b35" } },
+      y: { ticks: { color: "#8b93a7" }, grid: { color: "#272b35" } }
+    }
+  };
+}
+
 async function loadNutrition() {
+  loadForecast().catch(reportError);
+
   const res = await fetch(API + "/nutrition/maintenance");
   const data = await res.json();
 
@@ -247,16 +293,95 @@ async function loadNutrition() {
   });
 }
 
-function chartOptions() {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { labels: { color: "#8b93a7" } } },
-    scales: {
-      x: { ticks: { color: "#8b93a7", maxTicksLimit: 8 }, grid: { color: "#272b35" } },
-      y: { ticks: { color: "#8b93a7" }, grid: { color: "#272b35" } }
-    }
-  };
+function setForecastPlaceholders() {
+  document.getElementById("status-value").textContent = "–";
+  document.getElementById("status-detail").textContent = "";
+  document.getElementById("rate-value").innerHTML = "–<small> kg/week</small>";
+  document.getElementById("forecast-value").innerHTML = "–<small> kg</small>";
+  document.getElementById("forecast-range").textContent = "";
+  if (forecastChart) {
+    forecastChart.destroy();
+    forecastChart = null;
+  }
+}
+
+async function loadForecast() {
+  const [statusRes, pathRes, historyRes] = await Promise.all([
+    fetch(API + "/nutrition/trend-status"),
+    fetch(API + "/nutrition/forecast/path?days=14"),
+    fetch(API + "/nutrition/history?days=60")
+  ]);
+
+  if (!statusRes.ok || !pathRes.ok || !historyRes.ok) {
+    setForecastPlaceholders();
+    return;
+  }
+
+  const status = await statusRes.json();
+  const path = await pathRes.json();
+  const history = await historyRes.json();
+
+  const rate = status.weekly_rate;
+  document.getElementById("status-value").textContent =
+    status.status.charAt(0).toUpperCase() + status.status.slice(1);
+  document.getElementById("status-detail").textContent =
+    "95% range: " + status.weekly_rate_low.toFixed(2) + " to " + status.weekly_rate_high.toFixed(2) + " kg/week";
+  document.getElementById("rate-value").innerHTML =
+    (rate > 0 ? "+" : "") + rate.toFixed(2) + "<small> kg/week</small>";
+
+  const last = path[path.length - 1];
+  document.getElementById("forecast-value").innerHTML = last.forecast.toFixed(1) + "<small> kg</small>";
+  document.getElementById("forecast-range").textContent =
+    "90% range " + last.lower.toFixed(1) + " to " + last.upper.toFixed(1) + " on " + last.date;
+
+  const labels = history.map(r => r.date).concat(path.slice(1).map(p => p.date));
+  const pad = new Array(history.length - 1).fill(null);
+  const weightData = history.map(r => r.weight).concat(new Array(path.length - 1).fill(null));
+
+  const options = chartOptions();
+  options.plugins.legend.labels.filter = item => !item.text.startsWith("_");
+
+  if (forecastChart) forecastChart.destroy();
+  forecastChart = new Chart(document.getElementById("forecast-chart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Weight (kg)",
+          data: weightData,
+          borderColor: "rgba(139,147,167,0.9)",
+          backgroundColor: "rgba(139,147,167,0.9)",
+          showLine: false,
+          pointRadius: 3
+        },
+        {
+          label: "Forecast",
+          data: pad.concat(path.map(p => p.forecast)),
+          borderColor: "#4f8cff",
+          borderWidth: 3,
+          pointRadius: 0,
+          tension: 0
+        },
+        {
+          label: "_upper",
+          data: pad.concat(path.map(p => p.upper)),
+          borderWidth: 0,
+          pointRadius: 0,
+          backgroundColor: "rgba(79,140,255,0.18)",
+          fill: "+1"
+        },
+        {
+          label: "_lower",
+          data: pad.concat(path.map(p => p.lower)),
+          borderWidth: 0,
+          pointRadius: 0,
+          fill: false
+        }
+      ]
+    },
+    options
+  });
 }
 
 async function loadTraining() {
@@ -308,7 +433,7 @@ async function loadTraining() {
 function initExercises() {
   const select = document.getElementById("exercise-select");
   select.innerHTML = EXERCISES.map(e => `<option>${e}</option>`).join("");
-  select.addEventListener("change", loadTraining);
+  select.addEventListener("change", () => loadTraining().catch(reportError));
   document.getElementById("exercise-list").innerHTML = EXERCISES.map(e => `<option value="${e}">`).join("");
 }
 
@@ -319,17 +444,21 @@ document.getElementById("nutrition-form").addEventListener("submit", async event
     calories: parseFloat(document.getElementById("n-calories").value),
     weight: parseFloat(document.getElementById("n-weight").value)
   };
-  const res = await fetch(API + "/nutrition/log", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  if (res.ok) {
-    showMessage("nutrition-message", "Saved " + data.date, true);
-    loadNutrition();
-  } else {
-    showMessage("nutrition-message", errorText(data), false);
+  try {
+    const res = await fetch(API + "/nutrition/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showMessage("nutrition-message", "Saved " + data.date, true);
+      loadNutrition().catch(reportError);
+    } else {
+      showMessage("nutrition-message", errorText(data), false);
+    }
+  } catch (error) {
+    showMessage("nutrition-message", "Could not reach the API: " + error.message, false);
   }
 });
 
@@ -343,23 +472,27 @@ document.getElementById("set-form").addEventListener("submit", async event => {
     reps: parseInt(document.getElementById("s-reps").value, 10),
     rpe: rpeValue === "" ? null : parseFloat(rpeValue)
   };
-  const res = await fetch(API + "/training/sets", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  if (res.ok) {
-    showMessage("set-message", "Saved set " + data.set_number + " (session " + data.session_id + ")", true);
-    loadTraining();
-  } else {
-    showMessage("set-message", errorText(data), false);
+  try {
+    const res = await fetch(API + "/training/sets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showMessage("set-message", "Saved set " + data.set_number + " (session " + data.session_id + ")", true);
+      loadTraining().catch(reportError);
+    } else {
+      showMessage("set-message", errorText(data), false);
+    }
+  } catch (error) {
+    showMessage("set-message", "Could not reach the API: " + error.message, false);
   }
 });
 
 initExercises();
-loadNutrition();
-loadTraining();
+loadNutrition().catch(reportError);
+loadTraining().catch(reportError);
 </script>
 </body>
 </html>

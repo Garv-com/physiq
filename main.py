@@ -5,15 +5,17 @@ import datetime
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
-from src.forecasting import forecast_weight, trend_status
+from src.forecasting import forecast_path, forecast_weight, trend_status
 
 from src.database import (
     init_db,
     load_nutrition_df,
+    load_recent_nutrition,
     load_workout_df,
     add_nutrition_entry,
     add_workout_set,
 )
+
 from src.smoothing import compute_time_aware_ema
 from src.nutrition import (
     MIN_COVERAGE,
@@ -128,6 +130,19 @@ def get_trend_status():
         return trend_status(df)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+@app.get("/nutrition/forecast/path")
+def get_forecast_path(days: int = Query(14, ge=1, le=60)):
+    df = load_nutrition_df()
+    try:
+        return forecast_path(df, days_ahead=days)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.get("/nutrition/history")
+def get_nutrition_history(days: int = Query(60, ge=7, le=365)):
+    return load_recent_nutrition(days).to_dict(orient="records")
 
 
 @app.get("/training/summary/{exercise}")

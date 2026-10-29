@@ -150,3 +150,18 @@ def backtest_forecast(
     out["model_abs_error"] = (out["actual"] - out["forecast"]).abs()
     out["baseline_abs_error"] = (out["actual"] - out["baseline"]).abs()
     return out
+
+def forecast_path(df, days_ahead=14, date_col="date", **kwargs):
+    last_date = pd.to_datetime(df[date_col]).max()
+    path = []
+    for step in range(0, days_ahead + 1):
+        result = forecast_weight(df, days_ahead=step, date_col=date_col, **kwargs)
+        path.append(
+            {
+                "date": (last_date + pd.Timedelta(days=step)).strftime("%Y-%m-%d"),
+                "forecast": result["forecast_weight"],
+                "lower": result["lower"],
+                "upper": result["upper"],
+            }
+        )
+    return path
