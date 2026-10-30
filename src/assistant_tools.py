@@ -213,6 +213,8 @@ TOOL_SCHEMAS = [
     },
 ]
 
+UNITS_NOTE = "Weights are in kilograms (kg), calories in kcal, rates in kg per week."
+
 
 def run_tool(name, arguments):
     function = TOOL_FUNCTIONS.get(name)
@@ -220,8 +222,13 @@ def run_tool(name, arguments):
         return {"error": f"Unknown tool: {name}"}
 
     try:
-        return function(**(arguments or {}))
+        result = function(**(arguments or {}))
     except TypeError:
         return {"error": "Invalid arguments for this tool."}
     except Exception as error:
         return {"error": f"Tool failed: {type(error).__name__}"}
+
+    if isinstance(result, dict) and "error" not in result:
+        result["units"] = UNITS_NOTE
+
+    return result
