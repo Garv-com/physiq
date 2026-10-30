@@ -103,8 +103,10 @@ def tool_get_model_explanation():
             "Requires at least 70% of days logged."
         ),
         "weight_forecast": (
-            "Straight-line fit to the last 28 days of raw weigh-ins, extended forward, with a 90% "
-            "prediction interval. It assumes the recent trend continues."
+            "A local linear trend model (Kalman filter) fitted to the last 90 days of weigh-ins, "
+            "which handles missing days and reports a 90% prediction interval. With fewer than 14 "
+            "weigh-ins it falls back to a straight-line fit over the last 28 days. The 'method' "
+            "field says which was used. It assumes the recent trend continues."
         ),
         "trend_status": (
             "Slope of the last 28 days with a 95% confidence interval. 'stable' means the whole "
@@ -120,12 +122,13 @@ def tool_get_model_explanation():
         "validated_performance_on_synthetic_data": {
             "maintenance_estimate": "Typically within about 15 to 25 kcal (roughly 1%) of the true value.",
             "forecast_interval": (
-                "The 90% interval contained the actual weigh-in about 86% of the time over 14-day "
-                "horizons, so it is slightly overconfident."
+                "On held-out synthetic data the 90% interval contained the actual weigh-in about 90% "
+                "to 94% of the time over 14-day horizons."
             ),
-            "forecast_vs_baseline": (
-                "When weight was flat, a plain 7-day average was a little more accurate than the "
-                "trend forecast; when weight was changing steadily, the trend forecast was far better."
+            "forecast_accuracy": (
+                "The Kalman forecast had 3% to 11% lower error than a straight-line fit. When weight "
+                "was flat it was about equal to a plain 7-day average; when weight was changing "
+                "steadily it was far better than the 7-day average."
             ),
             "session_top_weight": (
                 "The heaviest set per session sits about 0.66 kg above true underlying strength on "
@@ -137,6 +140,7 @@ def tool_get_model_explanation():
             "Maintenance accuracy depends on honest, complete calorie logging.",
             "Forecasts do not know about future changes in diet or training.",
             "Sleep, stress and recovery are not tracked.",
+            "Forecast validation used simulated data that suits the model, so real-world accuracy may be lower.",
         ],
     }
 

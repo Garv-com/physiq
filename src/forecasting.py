@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from src.kalman import kalman_forecast, kalman_forecast_path
+
 
 def _recent_window(df, date_col, weight_col, lookback_days, min_points):
     dates = pd.to_datetime(df[date_col])
@@ -31,7 +33,7 @@ def _fit_line(x, y):
     return slope, intercept, resid_std, sxx, x_mean, n, dof
 
 
-def forecast_weight(
+def forecast_weight_linear(
     df,
     days_ahead=14,
     lookback_days=28,
@@ -56,6 +58,7 @@ def forecast_weight(
         "days_ahead": days_ahead,
         "confidence": confidence,
         "points_used": int(n),
+        "method": "linear",
     }
 
 
@@ -97,37 +100,82 @@ def trend_status(
     }
 
 
+def forecast_weight(df, days_ahead=14, confidence=0.9, method="kalman", date_col="date", weight_col="weight"):
+    if method == "kalman":
+        try:
+            return kalman_forecast(
+                df, days_ahead=days_ahead, confidence=confidence, date_col=date_col, weight_col=weight_col
+            )
+        except ValueError:
+            pass
+
+    return forecast_weight_linear(
+        df, days_ahead=days_ahead, confidence=confidence, date_col=date_col, weight_col=weight_col
+    )
+
+
+def forecast_path(df, days_ahead=14, confidence=0.9, method="kalman", date_col="date", weight_col="weight"):
+    if method == "kalman":
+        try:
+            path, _, _ = kalman_forecast_path(
+                df, days_ahead=days_ahead, confidence=confidence, date_col=date_col, weight_col=weight_col
+            )
+            return path
+        except ValueError:
+            pass
+
+    last_date = pd.to_datetime(df[date_col]).max()
+    path = []
+    for step in range(0, days_ahead + 1):
+        result = forecast_weight_linear(
+            df, days_ahead=step, confidence=confidence, date_col=date_col, weight_col=weight_col
+        )
+        path.append(
+            {
+                "date": (last_date + pd.Timedelta(days=step)).strftime("%Y-%m-%d"),
+                "forecast": result["forecast_weight"],
+                "lower": result["lower"],
+                "upper": result["upper"],
+            }
+        )
+    return path
+
+
 def backtest_forecast(
     df,
     horizon=14,
-    lookback_days=28,
     confidence=0.9,
-    min_points=10,
+    method="kalman",
+    min_history_days=45,
+    step_days=1,
     date_col="date",
     weight_col="weight",
 ):
     data = df.copy()
     data["_date"] = pd.to_datetime(data[date_col])
     data = data.sort_values("_date").reset_index(drop=True)
+    first_date = data["_date"].iloc[0]
 
     rows = []
-    for i in range(len(data)):
+    for i in range(0, len(data), step_days):
         origin = data["_date"].iloc[i]
+        if (origin - first_date).days < min_history_days:
+            continue
+
         target = data[data["_date"] == origin + pd.Timedelta(days=horizon)]
         if target.empty:
             continue
 
         history = data[data["_date"] <= origin]
         try:
-            result = forecast_weight(
-                history,
-                days_ahead=horizon,
-                lookback_days=lookback_days,
-                confidence=confidence,
-                min_points=min_points,
-                date_col=date_col,
-                weight_col=weight_col,
-            )
+            if method == "linear":
+                result = forecast_weight_linear(
+                    history, days_ahead=horizon, confidence=confidence, date_col=date_col, weight_col=weight_col
+                )
+            else:
+                result = kalman_forecast(
+                    history, days_ahead=horizon, confidence=confidence, date_col=date_col, weight_col=weight_col
+                )
         except ValueError:
             continue
 
@@ -150,18 +198,3 @@ def backtest_forecast(
     out["model_abs_error"] = (out["actual"] - out["forecast"]).abs()
     out["baseline_abs_error"] = (out["actual"] - out["baseline"]).abs()
     return out
-
-def forecast_path(df, days_ahead=14, date_col="date", **kwargs):
-    last_date = pd.to_datetime(df[date_col]).max()
-    path = []
-    for step in range(0, days_ahead + 1):
-        result = forecast_weight(df, days_ahead=step, date_col=date_col, **kwargs)
-        path.append(
-            {
-                "date": (last_date + pd.Timedelta(days=step)).strftime("%Y-%m-%d"),
-                "forecast": result["forecast_weight"],
-                "lower": result["lower"],
-                "upper": result["upper"],
-            }
-        )
-    return path
