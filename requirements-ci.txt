@@ -1,0 +1,10 @@
+numpy
+pandas
+scipy
+scikit-learn
+fastapi
+httpx
+pydantic
+python-dotenv
+google-genai
+pytest
