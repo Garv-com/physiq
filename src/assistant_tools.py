@@ -1,5 +1,8 @@
 import json
 
+import pandas as pd
+
+from src.anomalies import detect_weight_anomalies
 from src.database import load_nutrition_df, load_recent_nutrition, load_workout_df
 from src.forecasting import forecast_weight, trend_status
 from src.nutrition import MIN_COVERAGE, WARMUP_DAYS, estimate_maintenance, logging_coverage
@@ -71,6 +74,30 @@ def tool_detect_plateau():
         return {"error": str(error)}
 
 
+def tool_detect_anomalies(days=60):
+    days = _clamp_int(days, 7, 90, 60)
+    df = load_nutrition_df()
+    try:
+        anomalies = detect_weight_anomalies(df)
+    except ValueError as error:
+        return {"error": str(error)}
+
+    last_date = pd.to_datetime(df["date"]).max()
+    cutoff = (last_date - pd.Timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    recent = [item for item in anomalies if item["date"] >= cutoff]
+
+    return {
+        "days_checked": days,
+        "threshold_standard_deviations": 3.0,
+        "count": len(recent),
+        "anomalies": recent,
+        "note": (
+            "A flag means the weigh-in was far from what the trend predicted. It can be water, salt, "
+            "a late meal or a scale error, and does not by itself mean a real change in body weight."
+        ),
+    }
+
+
 def tool_analyze_progress(exercise):
     df = load_workout_df()
     valid_exercises = df["exercise"].unique().tolist()
@@ -112,6 +139,10 @@ def tool_get_model_explanation():
             "Slope of the last 28 days with a 95% confidence interval. 'stable' means the whole "
             "interval lies within +/-0.2 kg per week; 'uncertain' means the data cannot tell."
         ),
+        "anomaly_detection": (
+            "A weigh-in is flagged when it is at least 3 standard deviations away from what the "
+            "Kalman trend model predicted from the days before it."
+        ),
         "training_progress": (
             "Heaviest set per session, smoothed with an exponential moving average (alpha 0.3). "
             "Estimated 1RM uses the Epley formula. A PR means a new best estimated 1RM."
@@ -129,6 +160,11 @@ def tool_get_model_explanation():
                 "The Kalman forecast had 3% to 11% lower error than a straight-line fit. When weight "
                 "was flat it was about equal to a plain 7-day average; when weight was changing "
                 "steadily it was far better than the 7-day average."
+            ),
+            "anomaly_detection": (
+                "With day-to-day scale noise of 0.3 kg, it caught about 94% of 2 kg spikes, 62% of "
+                "1.2 kg spikes and 22% of 0.8 kg spikes, with about 0.2 false alarms per 90 days. "
+                "Smaller deviations are not reliably detectable."
             ),
             "session_top_weight": (
                 "The heaviest set per session sits about 0.66 kg above true underlying strength on "
@@ -150,6 +186,7 @@ TOOL_FUNCTIONS = {
     "predict_weight": tool_predict_weight,
     "estimate_maintenance": tool_estimate_maintenance,
     "detect_plateau": tool_detect_plateau,
+    "detect_anomalies": tool_detect_anomalies,
     "analyze_progress": tool_analyze_progress,
     "get_model_explanation": tool_get_model_explanation,
 }
@@ -194,6 +231,20 @@ TOOL_SCHEMAS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "detect_anomalies",
+        "description": (
+            "List recent weigh-ins that were unusually far from what the trend model predicted, "
+            "with the expected weight and how many standard deviations away each one was."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "Days to look back (7-90).", "minimum": 7, "maximum": 90}
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "analyze_progress",
         "description": (
             "Get recent training sessions for one exercise: top set, smoothed trend, volume and "
@@ -216,6 +267,7 @@ TOOL_SCHEMAS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 ]
+
 
 UNITS_NOTE = "Weights are in kilograms (kg), calories in kcal, rates in kg per week."
 

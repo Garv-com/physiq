@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from src.anomalies import detect_weight_anomalies
 from src.assistant import AssistantError, chat as assistant_chat
 from src.database import (
     init_db,
@@ -142,6 +143,13 @@ def get_trend_status():
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
 
+@app.get("/nutrition/anomalies")
+def get_weight_anomalies(threshold: float = Query(3.0, ge=2.0, le=6.0)):
+    df = load_nutrition_df()
+    try:
+        return detect_weight_anomalies(df, threshold=threshold)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 @app.get("/nutrition/forecast/path")
 def get_forecast_path(days: int = Query(14, ge=1, le=60)):

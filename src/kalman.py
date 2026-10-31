@@ -33,7 +33,7 @@ def _predict(level, slope, p11, p12, p22, q_level, q_slope):
     )
 
 
-def _run_filter(observations, r, q_level, q_slope, slope_prior_var):
+def _run_filter(observations, r, q_level, q_slope, slope_prior_var, trace=None):
     level = observations[0]
     slope = 0.0
     p11, p12, p22 = 1.0, 0.0, slope_prior_var
@@ -48,6 +48,8 @@ def _run_filter(observations, r, q_level, q_slope, slope_prior_var):
 
         innovation = y - level
         s = p11 + r
+        if trace is not None:
+            trace.append((index, y, level, s))
         k1 = p11 / s
         k2 = p12 / s
         log_likelihood += -0.5 * (math.log(2 * math.pi * s) + innovation * innovation / s)
@@ -87,6 +89,9 @@ def fit_local_linear_trend(observations, slope_prior_var=SLOPE_PRIOR_VAR):
 
 
 def _prepare(df, lookback_days, min_points, date_col, weight_col):
+    if len(df) == 0:
+        raise ValueError(f"Need at least {min_points} weigh-ins in the last {lookback_days} days; found 0.")
+
     series = _daily_series(df, date_col, weight_col).iloc[-lookback_days:]
     series = series.loc[series.first_valid_index():] if series.notna().any() else series
     count = int(series.notna().sum())
@@ -158,3 +163,36 @@ def kalman_forecast(
         "points_used": count,
         "method": "kalman",
     }
+
+
+def weight_innovations(
+    df,
+    lookback_days=LOOKBACK_DAYS,
+    min_points=MIN_POINTS,
+    date_col="date",
+    weight_col="weight",
+):
+    series, count, model = _prepare(df, lookback_days, min_points, date_col, weight_col)
+
+    trace = []
+    _run_filter(
+        series.to_numpy(dtype=float),
+        model["r"],
+        model["q_level"],
+        model["q_slope"],
+        SLOPE_PRIOR_VAR,
+        trace,
+    )
+
+    rows = []
+    for index, y, expected, s in trace:
+        rows.append(
+            {
+                "date": series.index[index].strftime("%Y-%m-%d"),
+                "weight": float(y),
+                "expected": float(expected),
+                "z_score": float((y - expected) / math.sqrt(s)),
+            }
+        )
+
+    return pd.DataFrame(rows)
