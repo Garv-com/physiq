@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from src.anomalies import detect_weight_anomalies
-from src.assistant import AssistantError, chat as assistant_chat
+from src.assistant import AssistantError, chat as assistant_chat, weekly_report as assistant_weekly_report
 from src.database import (
     init_db,
     load_nutrition_df,
@@ -214,5 +214,12 @@ def assistant_chat_endpoint(request: ChatRequest):
 
     try:
         return assistant_chat([message.model_dump() for message in request.messages])
+    except AssistantError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail)
+
+@app.post("/assistant/weekly-report")
+def assistant_weekly_report_endpoint():
+    try:
+        return assistant_weekly_report()
     except AssistantError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail)

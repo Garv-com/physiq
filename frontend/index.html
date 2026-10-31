@@ -33,6 +33,7 @@
   }
   header h1 { margin: 0; font-size: 22px; }
   header span { color: var(--muted); font-size: 14px; }
+  header a { margin-left: auto; color: var(--accent); text-decoration: none; font-size: 14px; }
   main {
     max-width: 1100px;
     margin: 0 auto;
@@ -91,13 +92,16 @@
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
   .pr { color: var(--good); font-weight: 600; }
   .muted { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .report { white-space: pre-wrap; line-height: 1.6; font-size: 15px; margin-top: 16px; }
+  .report.error { color: var(--bad); }
+  #report-button:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
 <header>
   <h1>Physiq</h1>
   <span>Nutrition and training intelligence</span>
-  <a href="assistant.html" style="margin-left:auto;color:var(--accent);text-decoration:none;font-size:14px;">Assistant</a>
+  <a href="assistant.html">Assistant</a>
 </header>
 
 <main>
@@ -106,6 +110,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="nutrition">Nutrition</button>
     <button class="tab" data-tab="training">Training</button>
+    <button class="tab" data-tab="report">Report</button>
   </div>
 
   <section id="nutrition" class="panel active">
@@ -144,6 +149,7 @@
     <div class="card chart-card">
       <h3>Weight and forecast</h3>
       <div class="chart-wrap"><canvas id="forecast-chart"></canvas></div>
+      <div class="muted" id="anomaly-note"></div>
     </div>
 
     <div class="card chart-card">
@@ -196,6 +202,15 @@
         <button class="primary" type="submit">Save set</button>
       </form>
       <div class="message" id="set-message"></div>
+    </div>
+  </section>
+
+  <section id="report" class="panel">
+    <div class="card">
+      <h3>Weekly report</h3>
+      <button class="primary" id="report-button" type="button">Generate weekly report</button>
+      <div class="muted">Written by AI from your model results. Not medical advice.</div>
+      <div class="report" id="report-output"></div>
     </div>
   </section>
 </main>
@@ -300,6 +315,7 @@ function setForecastPlaceholders() {
   document.getElementById("rate-value").innerHTML = "–<small> kg/week</small>";
   document.getElementById("forecast-value").innerHTML = "–<small> kg</small>";
   document.getElementById("forecast-range").textContent = "";
+  document.getElementById("anomaly-note").textContent = "";
   if (forecastChart) {
     forecastChart.destroy();
     forecastChart = null;
@@ -307,10 +323,11 @@ function setForecastPlaceholders() {
 }
 
 async function loadForecast() {
-  const [statusRes, pathRes, historyRes] = await Promise.all([
+  const [statusRes, pathRes, historyRes, anomalyRes] = await Promise.all([
     fetch(API + "/nutrition/trend-status"),
     fetch(API + "/nutrition/forecast/path?days=14"),
-    fetch(API + "/nutrition/history?days=60")
+    fetch(API + "/nutrition/history?days=60"),
+    fetch(API + "/nutrition/anomalies")
   ]);
 
   if (!statusRes.ok || !pathRes.ok || !historyRes.ok) {
@@ -321,6 +338,7 @@ async function loadForecast() {
   const status = await statusRes.json();
   const path = await pathRes.json();
   const history = await historyRes.json();
+  const anomalies = anomalyRes.ok ? await anomalyRes.json() : [];
 
   const rate = status.weekly_rate;
   document.getElementById("status-value").textContent =
@@ -339,6 +357,18 @@ async function loadForecast() {
   const pad = new Array(history.length - 1).fill(null);
   const weightData = history.map(r => r.weight).concat(new Array(path.length - 1).fill(null));
 
+  const historyDates = new Set(history.map(r => r.date));
+  const flaggedDates = new Set(anomalies.map(a => a.date));
+  const shown = anomalies.filter(a => historyDates.has(a.date));
+  document.getElementById("anomaly-note").textContent = shown.length === 0
+    ? "No unusual weigh-ins in this period."
+    : "Unusual weigh-ins (red): " + shown.map(a =>
+        a.date + " (" + (a.difference_kg > 0 ? "+" : "") + a.difference_kg.toFixed(1) + " kg vs expected)"
+      ).join(", ");
+  const padding = new Array(path.length - 1);
+  const pointColors = history.map(r => flaggedDates.has(r.date) ? "#ff6b6b" : "rgba(139,147,167,0.9)").concat(padding.fill("rgba(139,147,167,0.9)"));
+  const pointSizes = history.map(r => flaggedDates.has(r.date) ? 6 : 3).concat(new Array(path.length - 1).fill(3));
+
   const options = chartOptions();
   options.plugins.legend.labels.filter = item => !item.text.startsWith("_");
 
@@ -353,8 +383,9 @@ async function loadForecast() {
           data: weightData,
           borderColor: "rgba(139,147,167,0.9)",
           backgroundColor: "rgba(139,147,167,0.9)",
+          pointBackgroundColor: pointColors,
           showLine: false,
-          pointRadius: 3
+          pointRadius: pointSizes
         },
         {
           label: "Forecast",
@@ -488,6 +519,30 @@ document.getElementById("set-form").addEventListener("submit", async event => {
     }
   } catch (error) {
     showMessage("set-message", "Could not reach the API: " + error.message, false);
+  }
+});
+
+document.getElementById("report-button").addEventListener("click", async () => {
+  const button = document.getElementById("report-button");
+  const output = document.getElementById("report-output");
+  button.disabled = true;
+  output.className = "report";
+  output.textContent = "Generating...";
+
+  try {
+    const res = await fetch(API + "/assistant/weekly-report", { method: "POST" });
+    const data = await res.json();
+    if (res.ok) {
+      output.textContent = data.report;
+    } else {
+      output.className = "report error";
+      output.textContent = errorText(data);
+    }
+  } catch (error) {
+    output.className = "report error";
+    output.textContent = "Could not reach the API: " + error.message;
+  } finally {
+    button.disabled = false;
   }
 });
 
