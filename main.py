@@ -42,6 +42,8 @@ init_db()
 
 
 def seed_demo_data():
+    if not demo_mode():
+        return
     nutrition_csv = ROOT / "data" / "raw" / "synthetic_nutrition_log.csv"
     workout_csv = ROOT / "data" / "raw" / "synthetic_workout_log.csv"
     if nutrition_csv.exists() and workout_csv.exists():

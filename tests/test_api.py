@@ -130,3 +130,14 @@ def test_chat_passes_the_assistant_reply_through(client, monkeypatch):
     response = client.post("/assistant/chat", json={"messages": [{"role": "user", "content": "hi"}]})
     assert response.status_code == 200
     assert response.json()["reply"] == "ok"
+
+def test_demo_data_is_only_seeded_in_demo_mode(temp_db, monkeypatch):
+    import main
+
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    main.seed_demo_data()
+    assert temp_db.load_nutrition_df().empty
+
+    monkeypatch.setenv("DEMO_MODE", "true")
+    main.seed_demo_data()
+    assert len(temp_db.load_nutrition_df()) > 0
