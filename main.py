@@ -2,11 +2,16 @@ import sys
 sys.path.append(".")
 
 import datetime
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
 from src.anomalies import detect_weight_anomalies
 from src.assistant import AssistantError, chat as assistant_chat, weekly_report as assistant_weekly_report
 from src.database import (
@@ -16,8 +21,10 @@ from src.database import (
     load_workout_df,
     add_nutrition_entry,
     add_workout_set,
+    seed_from_csv,
 )
 from src.forecasting import forecast_path, forecast_weight, trend_status
+from src.limits import ai_budget, ai_limit_per_hour, demo_mode
 from src.smoothing import compute_time_aware_ema
 from src.nutrition import (
     MIN_COVERAGE,
@@ -28,15 +35,47 @@ from src.nutrition import (
 )
 from src.training import build_exercise_summary
 
+ROOT = Path(__file__).resolve().parent
 MIN_NUTRITION_DAYS = WARMUP_DAYS + 14
 
 init_db()
 
-app = FastAPI(title="Physiq API")
+
+def seed_demo_data():
+    nutrition_csv = ROOT / "data" / "raw" / "synthetic_nutrition_log.csv"
+    workout_csv = ROOT / "data" / "raw" / "synthetic_workout_log.csv"
+    if nutrition_csv.exists() and workout_csv.exists():
+        seed_from_csv(str(nutrition_csv), str(workout_csv))
+
+
+@asynccontextmanager
+async def lifespan(app):
+    seed_demo_data()
+    yield
+
+
+def block_in_demo():
+    if demo_mode():
+        raise HTTPException(status_code=403, detail="Logging is disabled in the public demo.")
+
+
+def check_ai_budget():
+    if demo_mode() and not ai_budget.try_spend(ai_limit_per_hour()):
+        raise HTTPException(
+            status_code=429,
+            detail="The public demo has reached its hourly AI limit. Try again later.",
+        )
+
+
+app = FastAPI(title="Physiq API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "http://127.0.0.1:5500,http://localhost:5500").split(",")
+        if origin.strip()
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
@@ -65,9 +104,9 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=20)
 
 
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "Physiq API is running"}
+@app.get("/health")
+def health():
+    return {"status": "ok", "message": "Physiq API is running", "demo_mode": demo_mode()}
 
 
 @app.get("/nutrition/maintenance")
@@ -143,6 +182,7 @@ def get_trend_status():
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
 
+
 @app.get("/nutrition/anomalies")
 def get_weight_anomalies(threshold: float = Query(3.0, ge=2.0, le=6.0)):
     df = load_nutrition_df()
@@ -150,6 +190,7 @@ def get_weight_anomalies(threshold: float = Query(3.0, ge=2.0, le=6.0)):
         return detect_weight_anomalies(df, threshold=threshold)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+
 
 @app.get("/nutrition/forecast/path")
 def get_forecast_path(days: int = Query(14, ge=1, le=60)):
@@ -184,12 +225,14 @@ def get_training_summary(exercise: str):
 
 @app.post("/nutrition/log")
 def log_nutrition(entry: NutritionEntry):
+    block_in_demo()
     add_nutrition_entry(entry.date.isoformat(), entry.calories, entry.weight)
     return {"status": "saved", "date": entry.date.isoformat()}
 
 
 @app.post("/training/sets", status_code=201)
 def log_workout_set(entry: WorkoutSetEntry):
+    block_in_demo()
     exercise = entry.exercise.strip()
     if not exercise:
         raise HTTPException(status_code=422, detail="Exercise name cannot be blank.")
@@ -206,6 +249,7 @@ def log_workout_set(entry: WorkoutSetEntry):
 
 @app.post("/assistant/chat")
 def assistant_chat_endpoint(request: ChatRequest):
+    check_ai_budget()
     if request.messages[0].role != "user" or request.messages[-1].role != "user":
         raise HTTPException(
             status_code=422,
@@ -217,9 +261,14 @@ def assistant_chat_endpoint(request: ChatRequest):
     except AssistantError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail)
 
+
 @app.post("/assistant/weekly-report")
 def assistant_weekly_report_endpoint():
+    check_ai_budget()
     try:
         return assistant_weekly_report()
     except AssistantError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail)
+
+
+app.mount("/", StaticFiles(directory=str(ROOT / "frontend"), html=True), name="frontend")

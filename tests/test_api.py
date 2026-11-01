@@ -16,9 +16,46 @@ def client(temp_db):
 
 
 def test_health_check(client):
-    response = client.get("/")
+    response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["demo_mode"] is False
+
+
+def test_frontend_pages_are_served_and_api_docs_still_work(client):
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "Physiq" in home.text
+    assert client.get("/assistant.html").status_code == 200
+    assert client.get("/docs").status_code == 200
+    assert client.get("/openapi.json").status_code == 200
+
+
+def test_demo_mode_blocks_logging_but_not_reading(client, monkeypatch):
+    monkeypatch.setenv("DEMO_MODE", "true")
+    assert client.get("/health").json()["demo_mode"] is True
+
+    nutrition = {"date": "2026-03-01", "calories": 2400, "weight": 75.0}
+    workout = {"date": "2026-03-01", "exercise": "Squat", "weight_kg": 100, "reps": 5}
+    assert client.post("/nutrition/log", json=nutrition).status_code == 403
+    assert client.post("/training/sets", json=workout).status_code == 403
+    assert client.get("/nutrition/history").status_code == 200
+
+
+def test_demo_mode_limits_ai_requests(client, monkeypatch):
+    import main
+    from src.limits import ai_budget
+
+    ai_budget.clear()
+    monkeypatch.setenv("DEMO_MODE", "true")
+    monkeypatch.setenv("AI_REQUESTS_PER_HOUR", "2")
+    monkeypatch.setattr(main, "assistant_chat", lambda messages: {"reply": "ok", "tools_used": []})
+
+    body = {"messages": [{"role": "user", "content": "hi"}]}
+    assert client.post("/assistant/chat", json=body).status_code == 200
+    assert client.post("/assistant/chat", json=body).status_code == 200
+    assert client.post("/assistant/chat", json=body).status_code == 429
+    ai_budget.clear()
 
 
 def test_nutrition_log_validates_input(client):

@@ -105,6 +105,7 @@
 </header>
 
 <main>
+  <div class="muted" id="demo-banner" style="display:none"></div>
   <div class="message" id="global-message"></div>
 
   <div class="tabs">
@@ -216,7 +217,7 @@
 </main>
 
 <script>
-const API = "http://127.0.0.1:8000";
+const API = location.port === "5500" ? "http://127.0.0.1:8000" : "";
 const EXERCISES = ["Squat", "Bench Press", "Deadlift", "Overhead Press"];
 let rollingChart = null;
 let trainingChart = null;
@@ -545,6 +546,17 @@ document.getElementById("report-button").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
+
+fetch(API + "/health")
+  .then(res => res.json())
+  .then(data => {
+    if (data.demo_mode) {
+      const banner = document.getElementById("demo-banner");
+      banner.textContent = "Public demo with simulated data. Logging is disabled.";
+      banner.style.display = "block";
+    }
+  })
+  .catch(() => {});
 
 initExercises();
 loadNutrition().catch(reportError);
