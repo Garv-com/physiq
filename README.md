@@ -2,6 +2,8 @@
 
 Nutrition and training analytics with a statistical ML core and an AI explanation layer.
 
+**Live demo: https://physiq-vnqq.onrender.com** (simulated data, logging disabled). It runs on a free host that sleeps when idle, so the first load can take up to a minute.
+
 Log daily weight and calories plus workout sets. Physiq estimates your maintenance calories, tracks your true weight trend, forecasts weight with uncertainty ranges, flags unusual weigh-ins, and tracks strength progress. An AI assistant explains the results in plain language, but every number it states comes from the models, not from the AI.
 
 Inspired by the adaptive-expenditure idea in MacroFactor and the logging flow of Strong. Not affiliated with either; the methods here are independent implementations of standard techniques.
@@ -70,12 +72,13 @@ When weight is flat, a plain 7-day average is about as good as the Kalman foreca
 - Scale weight is noisy (water, food, timing), so short forecasts carry wide ranges.
 - Forecasts assume the recent trend continues.
 - Single user, no authentication.
+- The public demo runs on a free host that sleeps when idle, resets its database on every restart, and caps AI requests per hour.
 - The AI assistant uses the Gemini free tier, which has low rate limits, and Google states that free-tier content may be used to improve its products. Do not send real personal data through it.
 - Not medical advice.
 
 ## Tech stack
 
-Python, pandas, NumPy, SciPy, scikit-learn, FastAPI, SQLite, Chart.js, Gemini API (google-genai), pytest, GitHub Actions.
+Python, pandas, NumPy, SciPy, scikit-learn, FastAPI, SQLite, Chart.js, Gemini API (google-genai), pytest, GitHub Actions, Render.
 
 ## Run it locally
 
@@ -89,33 +92,40 @@ python src/database.py
 uvicorn main:app --reload
 ```
 
-Serve the dashboard from a second terminal:
+Open `http://127.0.0.1:8000`. The server serves both the dashboard and the API.
 
-```
-cd frontend
-python -m http.server 5500
-```
-
-Open `http://127.0.0.1:5500`. The AI assistant and weekly report need a free Gemini API key from Google AI Studio. Put it in a file named `.env` in the project root:
+The AI assistant and weekly report need a free Gemini API key from Google AI Studio. Put it in a file named `.env` in the project root:
 
 ```
 GEMINI_API_KEY=your-key-here
 ```
 
-Everything else works without it. On macOS or Linux, activate with `source venv/bin/activate` and install from `requirements-ci.txt` plus `uvicorn`.
+Everything else works without it. On macOS or Linux, activate with `source venv/bin/activate` and install from `requirements-deploy.txt` instead of `requirements.txt`.
 
-Run the tests:
+Run the tests (67 of the 75 need `pip install pytest httpx` first):
 
 ```
 python -m pytest
 ```
 
+## Deployment
+
+The live demo runs as a single web service on Render's free tier, started with:
+
+```
+pip install -r requirements-deploy.txt
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+Environment variables: `DEMO_MODE=true` (disables logging), `AI_REQUESTS_PER_HOUR=20` (caps AI requests across all visitors), and `GEMINI_API_KEY`. The free tier's disk is wiped on restart, so the demo database is reseeded from the simulated datasets in `data/raw/` at every start.
+
 ## API
 
-Interactive docs at `http://127.0.0.1:8000/docs`.
+Interactive docs at `/docs` (live: https://physiq-vnqq.onrender.com/docs).
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/health` | Status and whether demo mode is on |
 | GET | `/nutrition/maintenance` | Maintenance estimate with logging coverage |
 | GET | `/nutrition/maintenance/rolling?window=30` | Rolling maintenance estimate |
 | GET | `/nutrition/forecast?days=14` | Weight forecast with 90% interval |
@@ -134,7 +144,7 @@ Interactive docs at `http://127.0.0.1:8000/docs`.
 ## Project layout
 
 ```
-main.py                   FastAPI app
+main.py                   FastAPI app, serves the dashboard
 src/
   smoothing.py            EMA trend (plain and time-aware)
   nutrition.py            maintenance estimation and logging coverage
@@ -145,9 +155,10 @@ src/
   database.py             SQLite access
   assistant.py            Gemini tool-calling loop and weekly report
   assistant_tools.py      read-only tools and model explanations
+  limits.py               demo mode and hourly AI request budget
   synthetic_generator.py  simulated nutrition data
   workout_generator.py    simulated workout data
 frontend/                 dashboard and assistant pages
 notebooks/                exploration and validation experiments
-tests/                    67 tests
+tests/                    75 tests
 ```
